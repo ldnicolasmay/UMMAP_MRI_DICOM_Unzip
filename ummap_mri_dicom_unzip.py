@@ -3,59 +3,107 @@
 ##
 # Import modules
 ##
-import subprocess
-import base64
+import sys
+import traceback
+import math
+from colored import fg, attr
 import paramiko
+
+
+##
+# Colors
+##
+grn = fg(2)
+org = fg(214)
+red = fg(1)
+reset = attr('reset')
 
 ##
 # Globals
 ##
+home_dir = '/Users/ldmay'
+server_url = 'madcbrain.umms.med.umich.edu'
+mri_basedir = '/nfs/psych-bhampstelab/RAW_nopreprocess'
+mri_dir_rgx = '"^(hlp|bmh)17umm[0-9]{5}_[0-9]{5}$"'
 
-dir_home = '/Users/ldmay'
-url_server = 'madcbrain.umms.med.umich.edu'
-basedir_mri = '/nfs/psych-bhampstelab/RAW_nopreprocess'
-rgx_mri_dir = '"^(hlp|bmh)17umm[0-9]{5}_[0-9]{5}$"'
+try:
+    # Establish SSH client
+    client = paramiko.SSHClient()
+    client.load_system_host_keys(filename=f'{home_dir}/.ssh/known_hosts')
+    client.connect(hostname=server_url)
 
-##
-# Establish SSH client for `madcbrain`
-##
+    # Get targeted MRI session directories
+    _, stdout, _ = \
+        client.exec_command(f'ls {mri_basedir} | egrep {mri_dir_rgx}')
 
-client = paramiko.SSHClient()
-client.load_system_host_keys(filename=f'{dir_home}/.ssh/known_hosts')
-client.connect(hostname=url_server)
+    # Listify stdout
+    mri_dirs = [line.strip('\n') for line in stdout]
+    len_mri_dirs = len(mri_dirs)
 
-stdin, stdout, stderr = \
-    client.exec_command(f'ls {basedir_mri} | egrep {rgx_mri_dir}')
+    mri_dirs_dicom_entries = {}
+    mri_dirs_dicom_entries_processed = len(mri_dirs_dicom_entries)
+    progress_bar_width = min(80, len_mri_dirs)
+    new_perc_processed = math.floor(mri_dirs_dicom_entries_processed / len_mri_dirs * progress_bar_width)
 
-dirs_mri = [line.strip('\n') for line in stdout]
+    print('+', '-' * progress_bar_width, '+', sep='')
+    print('|', end='')
+    for mri_dir in mri_dirs:
+        _, stdout, _ = client.exec_command(f'ls {mri_basedir}/{mri_dir} | egrep {"^dicom"}')
+        dicom_entries_list = [line.strip('\n') for line in stdout]
+        mri_dirs_dicom_entries[mri_dir] = dicom_entries_list
+        mri_dirs_dicom_entries_processed = mri_dirs_dicom_entries_processed + 1
+        old_perc_processed = new_perc_processed
+        new_perc_processed = math.floor(mri_dirs_dicom_entries_processed / len_mri_dirs * progress_bar_width)
+        if old_perc_processed < new_perc_processed:
+            print('=', end='', flush=True)
+    print('|')
 
-for dir_mri in dirs_mri:
-    print(f'{basedir_mri}/{dir_mri}')
+    no_mri_dirs_dicom_entries = \
+        {key: value for (key, value) in mri_dirs_dicom_entries.items() if value == []}
 
-print(f'{basedir_mri}/{dirs_mri[0]}')
+    unzipped_mri_dirs_dicom_entries = \
+        {key: value for (key, value) in mri_dirs_dicom_entries.items() if 'dicom' in value}
 
-foo = {}
-for dir_mri in dirs_mri:
-    stdin, stdout, stderr = \
-        client.exec_command(f'ls {basedir_mri}/{dir_mri} | egrep {"^dicom"}')
-    bar = [line.strip('\n') for line in stdout]
-    print(dir_mri, ": ", bar, sep="")
-    foo[dir_mri] = bar
+    to_be_unzipped_mri_dirs_dicom_entries = \
+        {key: value for (key, value) in mri_dirs_dicom_entries.items() if value == ['dicom.tgz']}
 
-print(foo)
-print(len(foo))
+    len_unzipped_mri_dirs_dicom_entries = len(unzipped_mri_dirs_dicom_entries)
+    len_to_be_unzipped_mri_dirs_dicom_entries = len(to_be_unzipped_mri_dirs_dicom_entries)
+    len_no_mri_dirs_dicom_entries = len(no_mri_dirs_dicom_entries)
+    len_mri_dirs_dicom_entries = len(mri_dirs_dicom_entries)
 
-print({key: value for (key, value) in foo.items() if value == []})
-print(len({key: value for (key, value) in foo.items() if value == []}))
+    all_entries_lens = [len_unzipped_mri_dirs_dicom_entries,
+                        len_to_be_unzipped_mri_dirs_dicom_entries,
+                        len_no_mri_dirs_dicom_entries,
+                        len_mri_dirs_dicom_entries]
 
-print({key: value for (key, value) in foo.items() if value == ['dicom.tgz']})  # THIS ONE <<<
-print(len({key: value for (key, value) in foo.items() if value == ['dicom.tgz']}))
+    def pad_len_entries(len_entry, all_entries, filler=' '):
+        max_len = max([len(str(entry)) for entry in all_entries])
+        len_diff = max_len - len(str(len_entry))
+        return filler * len_diff + str(len_entry)
 
-print({key: value for (key, value) in foo.items() if value == ['dicom']})
-print(len({key: value for (key, value) in foo.items() if value == ['dicom']}))
+    assert sum(all_entries_lens[:-1]) == sum(all_entries_lens[-1:])
 
-print({key: value for (key, value) in foo.items() if 'dicom.tgz' in value and 'dicom' in value})
-print(len({key: value for (key, value) in foo.items() if 'dicom.tgz' in value and 'dicom' in value}))
+    print()
+    print(f"{grn}MRI directories containing `dicom` (unzipped):    ",
+          f"{pad_len_entries(len_unzipped_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
+    print(f"{org}MRI directories missing `dicom` (to be unzipped): ",
+          f"{pad_len_entries(len_to_be_unzipped_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
+    print(f"{red}MRI directories missing `dicom.tgz` and `dicom`:  ",
+          f"{pad_len_entries(len_no_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
+    print("                                                  ",
+          f"{pad_len_entries('', all_entries_lens, filler='-')}")
+    print(f"MRI directories total:                             "
+          f"{pad_len_entries(len_mri_dirs_dicom_entries, all_entries_lens)}")
+    print()
 
-client.close()
+    client.close()
 
+except Exception as e:
+    print("*** Caught exception: %s: %s" % (e.__class__, e))
+    traceback.print_exc()
+    try:
+        client.close()
+    except:
+        pass
+    sys.exit(1)
