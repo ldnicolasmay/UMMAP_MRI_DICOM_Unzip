@@ -1,109 +1,110 @@
 #!/usr/bin/env python3
 
-##
-# Import modules
-##
-import sys
-import traceback
-import math
-from colored import fg, attr
-import paramiko
+##################
+# Import modules #
+
+import argparse
+import os
+import re
+import logging
+import subprocess
 
 
-##
-# Colors
-##
-grn = fg(2)
-org = fg(214)
-red = fg(1)
-reset = attr('reset')
+###################################
+# Helper Function for Arg Parsing #
 
-##
-# Globals
-##
-home_dir = '/Users/ldmay'
-server_url = 'madcbrain.umms.med.umich.edu'
-mri_basedir = '/nfs/psych-bhampstelab/RAW_nopreprocess'
-mri_dir_rgx = '"^(hlp|bmh)17umm[0-9]{5}_[0-9]{5}$"'
+def str2bool(val):
+    if isinstance(val, bool):
+        return val
+    elif val.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif val.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
-try:
-    # Establish SSH client
-    client = paramiko.SSHClient()
-    client.load_system_host_keys(filename=f'{home_dir}/.ssh/known_hosts')
-    client.connect(hostname=server_url)
 
-    # Get targeted MRI session directories
-    _, stdout, _ = \
-        client.exec_command(f'ls {mri_basedir} | egrep {mri_dir_rgx}')
+########
+# Main #
 
-    # Listify stdout
-    mri_dirs = [line.strip('\n') for line in stdout]
-    len_mri_dirs = len(mri_dirs)
+def main():
 
-    mri_dirs_dicom_entries = {}
-    mri_dirs_dicom_entries_processed = len(mri_dirs_dicom_entries)
-    progress_bar_width = min(80, len_mri_dirs)
-    new_perc_processed = math.floor(mri_dirs_dicom_entries_processed / len_mri_dirs * progress_bar_width)
+    ##############
+    # Parse Args #
 
-    print('+', '-' * progress_bar_width, '+', sep='')
-    print('|', end='')
-    for mri_dir in mri_dirs:
-        _, stdout, _ = client.exec_command(f'ls {mri_basedir}/{mri_dir} | egrep {"^dicom"}')
-        dicom_entries_list = [line.strip('\n') for line in stdout]
-        mri_dirs_dicom_entries[mri_dir] = dicom_entries_list
-        mri_dirs_dicom_entries_processed = mri_dirs_dicom_entries_processed + 1
-        old_perc_processed = new_perc_processed
-        new_perc_processed = math.floor(mri_dirs_dicom_entries_processed / len_mri_dirs * progress_bar_width)
-        if old_perc_processed < new_perc_processed:
-            print('=', end='', flush=True)
-    print('|')
+    parser = argparse.ArgumentParser(description="Unzip DICOM tarballs on `madcbrain`.")
 
-    no_mri_dirs_dicom_entries = \
-        {key: value for (key, value) in mri_dirs_dicom_entries.items() if value == []}
+    parser.add_argument('-m', '--mri_path', required=True,
+                        help=f"required: "
+                             f"absolute path to directory containing source MRI folders")
+    parser.add_argument('-s', '--subfolder_regex', required=True,
+                        help=f"quoted regular expression strings to use for subfolder matches")
+    parser.add_argument('-v', '--verbose',
+                        type=str2bool, nargs='?', const=True, default=False,
+                        help=f"print actions to stdout")
 
-    unzipped_mri_dirs_dicom_entries = \
-        {key: value for (key, value) in mri_dirs_dicom_entries.items() if 'dicom' in value}
+    args = parser.parse_args()
 
-    to_be_unzipped_mri_dirs_dicom_entries = \
-        {key: value for (key, value) in mri_dirs_dicom_entries.items() if value == ['dicom.tgz']}
+    ###########
+    # Globals #
 
-    len_unzipped_mri_dirs_dicom_entries = len(unzipped_mri_dirs_dicom_entries)
-    len_to_be_unzipped_mri_dirs_dicom_entries = len(to_be_unzipped_mri_dirs_dicom_entries)
-    len_no_mri_dirs_dicom_entries = len(no_mri_dirs_dicom_entries)
-    len_mri_dirs_dicom_entries = len(mri_dirs_dicom_entries)
+    mri_basedir = args.mri_path
+    mri_dir_rgx = re.compile(r'^(hlp|bmh)17umm\d{5}_\d{5}$')
+    if args.subfolder_regex:
+        mri_dir_rgx = re.compile(args.subfolder_regex)
+    dicom_rgx = re.compile(r'^dicom(\.tgz)?$')
+    verbose = args.verbose
 
-    all_entries_lens = [len_unzipped_mri_dirs_dicom_entries,
-                        len_to_be_unzipped_mri_dirs_dicom_entries,
-                        len_no_mri_dirs_dicom_entries,
-                        len_mri_dirs_dicom_entries]
+    # Get DirEntry objects for all files and directories in `mri_path`
+    dir_entries = os.scandir(mri_basedir)
 
-    def pad_len_entries(len_entry, all_entries, filler=' '):
-        max_len = max([len(str(entry)) for entry in all_entries])
-        len_diff = max_len - len(str(len_entry))
-        return filler * len_diff + str(len_entry)
+    # Filter `dir_entries` for only participant-session directories
+    pt_dir_entries = [de for de in dir_entries if re.match(mri_dir_rgx, de.name) and de.is_dir()]
 
-    assert sum(all_entries_lens[:-1]) == sum(all_entries_lens[-1:])
+    # Build dict for participant-session directories (keys, DirEntry objects) and
+    # sub-files/-directories matching `dicom.tgz` or `dicom` (values, lists of DirEntry objects)
+    pt_sess_dir_entries_dict = {}
+    for pde in pt_dir_entries:
+        sess_dir_entries = [sde for sde in os.scandir(f"{mri_basedir}/{pde.name}") if re.match(dicom_rgx, sde.name)]
+        pt_sess_dir_entries_dict[pde] = sess_dir_entries
 
-    print()
-    print(f"{grn}MRI directories containing `dicom` (unzipped):    ",
-          f"{pad_len_entries(len_unzipped_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
-    print(f"{org}MRI directories missing `dicom` (to be unzipped): ",
-          f"{pad_len_entries(len_to_be_unzipped_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
-    print(f"{red}MRI directories missing `dicom.tgz` and `dicom`:  ",
-          f"{pad_len_entries(len_no_mri_dirs_dicom_entries, all_entries_lens)}{reset}")
-    print("                                                  ",
-          f"{pad_len_entries('', all_entries_lens, filler='-')}")
-    print(f"MRI directories total:                             "
-          f"{pad_len_entries(len_mri_dirs_dicom_entries, all_entries_lens)}")
-    print()
+    # Filter participant-session dir entries dict into 4 categories
+    # | dicom.tgz | dicom |
+    # +-----------+-------+
+    # |     0     |   0   | => Throw warning
+    # |     0     |   1   | => Ignore b/c already unzipped
+    # |     1     |   0   | => Unzip tarballs
+    # |     1     |   1   | => Ignore b/c already unzipped
+    no_dicomtgz_no_dicom_dict = \
+        {k: v for (k, v) in pt_sess_dir_entries_dict.items() if not v}
+    no_dicomtgz_yes_dicom_dict = \
+        {k: v for (k, v) in pt_sess_dir_entries_dict.items()
+         if "dicom" in map(lambda de: de.name, v) and "dicom.tgz" not in map(lambda de: de.name, v)}
+    yes_dicomtgz_no_dicom_dict = \
+        {k: v for (k, v) in pt_sess_dir_entries_dict.items()
+         if "dicom" not in map(lambda de: de.name, v) and "dicom.tgz" in map(lambda de: de.name, v)}
+    yes_dicomtgz_yes_dicom_dict = \
+        {k: v for (k, v) in pt_sess_dir_entries_dict.items()
+         if "dicom" in map(lambda de: de.name, v) and "dicom.tgz" in map(lambda de: de.name, v)}
 
-    client.close()
+    # Combine `no_dicomtgz_yes_dicom_dict` and `yes_dicomtgz_yes_dicom_dict`
+    yes_dicom_dict = no_dicomtgz_yes_dicom_dict
+    yes_dicom_dict.update(yes_dicomtgz_yes_dicom_dict)
 
-except Exception as e:
-    print("*** Caught exception: %s: %s" % (e.__class__, e))
-    traceback.print_exc()
-    try:
-        client.close()
-    except:
-        pass
-    sys.exit(1)
+    # Throw warning if there are pt directories with no `dicom` and no `dicom.tgz`
+    if no_dicomtgz_no_dicom_dict:
+        logging.warning(f"MRI session directories without necessary DICOM tarball or directory:"
+                        f"\n\t{no_dicomtgz_no_dicom_dict}")
+        if verbose:
+            print(f"Already unzipped: {len(yes_dicom_dict)}")
+            print(f"To be unzipped:   {len(yes_dicomtgz_no_dicom_dict)}")
+
+    # Unzip the tarballs where the `dicom.tgz` exists but `dicom` directories don't exist
+    for pde, dicom_list in yes_dicomtgz_no_dicom_dict.items():
+        if verbose:
+            print(f"Decompressing {pde.path}/{dicom_list[0].name}")
+        subprocess.run(["tar", "-C", f"{pde.path}", "-x", "-z", "-f", f"{pde.path}/{dicom_list[0].name}"])
+
+
+if __name__ == "__main__":
+    main()
