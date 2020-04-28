@@ -35,13 +35,12 @@ def main():
     parser = argparse.ArgumentParser(description="Unzip DICOM tarballs on `madcbrain`.")
 
     parser.add_argument('-m', '--mri_path', required=True,
-                        help=f"required: "
-                             f"absolute path to directory containing source MRI folders")
+                        help="required: absolute path to directory containing source MRI folders")
     parser.add_argument('-s', '--subfolder_regex', required=True,
-                        help=f"quoted regular expression strings to use for subfolder matches")
+                        help="required: quoted regular expression strings to use for subfolder matches")
     parser.add_argument('-v', '--verbose',
                         type=str2bool, nargs='?', const=True, default=False,
-                        help=f"print actions to stdout")
+                        help="print actions to stdout")
 
     args = parser.parse_args()
 
