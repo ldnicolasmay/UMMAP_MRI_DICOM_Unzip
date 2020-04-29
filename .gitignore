@@ -1,4 +1,6 @@
 venv/
+log/
+err/
 
 .DS_Store
 *.csv
