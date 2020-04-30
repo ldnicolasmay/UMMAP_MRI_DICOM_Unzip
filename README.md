@@ -4,7 +4,7 @@ This script unzips the `dicom.tgz` files one level beneath a target directory de
 
 A firm grasp of regular expressions is required to use this app effectively. ([RegexOne](https://regexone.com/) offers a good tutorial on regular expressions.)
 
-_**Regex patterns passed as command-line option arguments should be quoted!**_ See [example run](https://gitlab.com/ldnicolasmay/UMMAP_MRI_DICOM_Unzip/-/tree/master#example-run) or [example run with logging](https://gitlab.com/ldnicolasmay/UMMAP_MRI_DICOM_Unzip/-/tree/master#example-run-with-logging) below.
+_**Regex patterns passed as command-line option arguments should be quoted!**_ See [example run](https://github.com/ldnicolasmay/UMMAP_MRI_DICOM_Unzip#example-run) or [example run with logging](https://github.com/ldnicolasmay/UMMAP_MRI_DICOM_Unzip#example-run-with-logging) below.
 
 The directory tree structure is assumed to be this:
 
