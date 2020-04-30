@@ -6,3 +6,5 @@ venv/
 *.doc*
 *.pdf
 *.bak
+*.log
+*.err
